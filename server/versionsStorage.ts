@@ -42,6 +42,8 @@ export type VersionPayload = {
   name: string;
   guests: unknown[];
   tables: unknown[];
+  stageSize?: { w: number; h: number };
+  pan?: { x: number; y: number };
 };
 
 export type VersionMeta = {
@@ -53,6 +55,8 @@ export type VersionMeta = {
 export type VersionFull = VersionMeta & {
   guests: unknown[];
   tables: unknown[];
+  stageSize?: { w: number; h: number };
+  pan?: { x: number; y: number };
 };
 
 export async function listVersions(): Promise<VersionMeta[]> {

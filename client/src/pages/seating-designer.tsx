@@ -42,6 +42,8 @@ type SavedVersion = {
   savedAt: string;
   guests: Guest[];
   tables: TableModel[];
+  stageSize?: { w: number; h: number };
+  pan?: { x: number; y: number };
 };
 
 type VersionMeta = { id: string; name: string; savedAt: string };
@@ -377,7 +379,35 @@ export default function SeatingDesignerPage() {
   } | null>(null);
 
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const [stageSize, setStageSize] = useState({ w: 1000, h: 650 });
+  
+  // Calculate stage size that fits all tables with padding
+  function calculateStageSize(tablesList: TableModel[]): { w: number; h: number } {
+    if (tablesList.length === 0) {
+      return { w: 1000, h: 650 };
+    }
+    const padding = 200;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    
+    tablesList.forEach((t) => {
+      const tableSize = t.shape === "rect" ? { w: 126, h: 74 } : { w: 98, h: 98 };
+      const halfW = tableSize.w / 2;
+      const halfH = tableSize.h / 2;
+      minX = Math.min(minX, t.x - halfW);
+      minY = Math.min(minY, t.y - halfH);
+      maxX = Math.max(maxX, t.x + halfW);
+      maxY = Math.max(maxY, t.y + halfH);
+    });
+    
+    return {
+      w: Math.max(800, maxX - minX + padding * 2),
+      h: Math.max(600, maxY - minY + padding * 2),
+    };
+  }
+  
+  const [stageSize, setStageSize] = useState(() => calculateStageSize(defaultTables));
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [resizingStage, setResizingStage] = useState(false);
@@ -469,6 +499,16 @@ export default function SeatingDesignerPage() {
             setGuests(guestsCopy);
             setTables(tablesCopy);
             setSelectedTableId(tablesCopy[0]?.id ?? null);
+            if (data.stageSize) {
+              setStageSize(data.stageSize);
+            } else {
+              setStageSize(calculateStageSize(tablesCopy));
+            }
+            if (data.pan) {
+              setPan(data.pan);
+            } else {
+              setPan({ x: 0, y: 0 });
+            }
             setHasAutoLoaded(true);
             console.log(`Auto-loaded latest version: "${data.name}"`);
             toast({
@@ -506,6 +546,8 @@ export default function SeatingDesignerPage() {
             name: trimmed,
             guests: JSON.parse(JSON.stringify(guests)),
             tables: JSON.parse(JSON.stringify(tables)),
+            stageSize: { ...stageSize },
+            pan: { ...pan },
           }),
         });
         if (res.ok) {
@@ -542,6 +584,8 @@ export default function SeatingDesignerPage() {
       savedAt: new Date().toISOString(),
       guests: JSON.parse(JSON.stringify(guests)),
       tables: JSON.parse(JSON.stringify(tables)),
+      stageSize: { ...stageSize },
+      pan: { ...pan },
     };
     setSavedVersions((prev) => [version, ...prev].slice(0, 20));
     setVersionName("");
@@ -555,6 +599,16 @@ export default function SeatingDesignerPage() {
     setGuests(guestsCopy);
     setTables(tablesCopy);
     setSelectedTableId(tablesCopy[0]?.id ?? null);
+    if (v.stageSize) {
+      setStageSize(v.stageSize);
+    } else {
+      setStageSize(calculateStageSize(tablesCopy));
+    }
+    if (v.pan) {
+      setPan(v.pan);
+    } else {
+      setPan({ x: 0, y: 0 });
+    }
   }
 
   async function loadServerVersion(id: string) {
@@ -574,6 +628,16 @@ export default function SeatingDesignerPage() {
       setGuests(guestsCopy);
       setTables(tablesCopy);
       setSelectedTableId(tablesCopy[0]?.id ?? null);
+      if (data.stageSize) {
+        setStageSize(data.stageSize);
+      } else {
+        setStageSize(calculateStageSize(tablesCopy));
+      }
+      if (data.pan) {
+        setPan(data.pan);
+      } else {
+        setPan({ x: 0, y: 0 });
+      }
       toast({
         title: "Version loaded",
         description: `"${data.name}" loaded successfully.`,
