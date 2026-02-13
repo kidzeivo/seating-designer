@@ -302,7 +302,8 @@ export default function SeatingDesignerPage() {
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [tool, setTool] = useState<"select" | "pan">("select");
 
-  const [guests, setGuests] = useState<Guest[]>(() => [
+  // Default initial state (fallback if no server versions found)
+  const defaultGuests: Guest[] = [
     { id: "g1", name: "Ava Johnson", gender: "female" },
     { id: "g2", name: "Noah Williams", gender: "male" },
     { id: "g3", name: "Sophia Brown", gender: "female" },
@@ -313,9 +314,9 @@ export default function SeatingDesignerPage() {
     { id: "g8", name: "Lucas Moore", gender: "male" },
     { id: "g9", name: "Amelia Taylor", gender: "female" },
     { id: "g10", name: "Benjamin Anderson", gender: "male" },
-  ]);
+  ];
 
-  const [tables, setTables] = useState<TableModel[]>(() => [
+  const defaultTables: TableModel[] = [
     {
       id: "t1",
       number: 1,
@@ -358,7 +359,11 @@ export default function SeatingDesignerPage() {
         guestId: i < 3 ? `g${i + 8}` : undefined,
       })),
     },
-  ]);
+  ];
+
+  const [guests, setGuests] = useState<Guest[]>(defaultGuests);
+  const [tables, setTables] = useState<TableModel[]>(defaultTables);
+  const [hasAutoLoaded, setHasAutoLoaded] = useState(false);
 
   const [selectedTableId, setSelectedTableId] = useState<string | null>("t1");
   const selectedTable = useMemo(
@@ -432,19 +437,61 @@ export default function SeatingDesignerPage() {
       if (res.ok) {
         const list = (await res.json()) as VersionMeta[];
         setServerVersions(list);
+        return list;
       } else {
         console.error("Failed to fetch server versions:", res.status, res.statusText);
+        return [];
       }
     } catch (err) {
       console.error("Error fetching server versions:", err);
       setServerVersions([]);
+      return [];
     } finally {
       setServerVersionsLoading(false);
     }
   }
 
   useEffect(() => {
-    fetchServerVersions();
+    let mounted = true;
+    async function loadLatestServerVersion() {
+      try {
+        const versions = await fetchServerVersions();
+        if (!mounted) return;
+        if (versions.length > 0) {
+          // Versions are already sorted by date (newest first)
+          const latestId = versions[0].id;
+          const res = await fetch(`/api/versions/${latestId}`);
+          if (!mounted) return;
+          if (res.ok) {
+            const data = (await res.json()) as SavedVersion;
+            const guestsCopy = JSON.parse(JSON.stringify(data.guests)) as Guest[];
+            const tablesCopy = JSON.parse(JSON.stringify(data.tables)) as TableModel[];
+            setGuests(guestsCopy);
+            setTables(tablesCopy);
+            setSelectedTableId(tablesCopy[0]?.id ?? null);
+            setHasAutoLoaded(true);
+            console.log(`Auto-loaded latest version: "${data.name}"`);
+            toast({
+              title: "Loaded latest version",
+              description: `"${data.name}" loaded automatically.`,
+            });
+          } else {
+            setHasAutoLoaded(true);
+          }
+        } else {
+          // No server versions, use defaults
+          setHasAutoLoaded(true);
+        }
+      } catch (err) {
+        console.error("Error auto-loading latest version:", err);
+        if (mounted) setHasAutoLoaded(true);
+      }
+    }
+    loadLatestServerVersion();
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function saveCurrentVersion(name: string) {
