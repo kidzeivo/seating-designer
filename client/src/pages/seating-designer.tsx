@@ -13,6 +13,7 @@ import {
   Save,
   Sparkles,
   Trash2,
+  Upload,
   UserMinus,
   Users,
 } from "lucide-react";
@@ -302,7 +303,7 @@ export default function SeatingDesignerPage() {
   const [showTour, setShowTour] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [snapToGrid, setSnapToGrid] = useState(true);
-  const [tool, setTool] = useState<"select" | "pan">("select");
+  const [tool, setTool] = useState<"select" | "pan">("pan");
 
   // Default initial state (fallback if no server versions found)
   const defaultGuests: Guest[] = [
@@ -383,9 +384,11 @@ export default function SeatingDesignerPage() {
   // Calculate stage size that fits all tables with padding
   function calculateStageSize(tablesList: TableModel[]): { w: number; h: number } {
     if (tablesList.length === 0) {
-      return { w: 1000, h: 650 };
+      const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+      return isMobile ? { w: Math.min(800, window.innerWidth - 32), h: 600 } : { w: 1000, h: 650 };
     }
-    const padding = 200;
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+    const padding = isMobile ? 100 : 200;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -401,9 +404,20 @@ export default function SeatingDesignerPage() {
       maxY = Math.max(maxY, t.y + halfH);
     });
     
+    const calculatedW = maxX - minX + padding * 2;
+    const calculatedH = maxY - minY + padding * 2;
+    
+    if (isMobile) {
+      const maxWidth = Math.min(800, window.innerWidth - 32);
+      return {
+        w: Math.max(maxWidth, calculatedW),
+        h: Math.max(500, calculatedH),
+      };
+    }
+    
     return {
-      w: Math.max(800, maxX - minX + padding * 2),
-      h: Math.max(600, maxY - minY + padding * 2),
+      w: Math.max(800, calculatedW),
+      h: Math.max(600, calculatedH),
     };
   }
   
@@ -533,6 +547,27 @@ export default function SeatingDesignerPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Recalculate stage size on mobile when window resizes or tables change
+  useEffect(() => {
+    const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+    if (isMobile && hasAutoLoaded) {
+      const newSize = calculateStageSize(tables);
+      setStageSize(newSize);
+    }
+  }, [tables, hasAutoLoaded]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+      if (isMobile && hasAutoLoaded) {
+        const newSize = calculateStageSize(tables);
+        setStageSize(newSize);
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [tables, hasAutoLoaded]);
 
   async function saveCurrentVersion(name: string) {
     const trimmed = name.trim() || `Version ${serverVersions.length + savedVersions.length + 1}`;
@@ -680,6 +715,109 @@ export default function SeatingDesignerPage() {
       });
       console.error("Delete error:", err);
     }
+  }
+
+  function exportVersion(version: SavedVersion | VersionMeta, isServer: boolean) {
+    async function doExport() {
+      try {
+        let fullVersion: SavedVersion;
+        if (isServer && "id" in version && !("guests" in version)) {
+          // Fetch full version from server
+          const res = await fetch(`/api/versions/${version.id}`);
+          if (!res.ok) {
+            toast({
+              title: "Failed to export",
+              description: "Could not fetch version data.",
+              variant: "destructive",
+            });
+            return;
+          }
+          fullVersion = (await res.json()) as SavedVersion;
+        } else {
+          fullVersion = version as SavedVersion;
+        }
+
+        const exportData = {
+          name: fullVersion.name,
+          savedAt: fullVersion.savedAt,
+          guests: fullVersion.guests,
+          tables: fullVersion.tables,
+          stageSize: fullVersion.stageSize,
+          pan: fullVersion.pan,
+        };
+
+        const json = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `seating-plan-${fullVersion.name.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${new Date(fullVersion.savedAt).toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast({
+          title: "Version exported",
+          description: `"${fullVersion.name}" exported successfully.`,
+        });
+      } catch (err) {
+        toast({
+          title: "Failed to export",
+          description: "Error exporting version. Check console for details.",
+          variant: "destructive",
+        });
+        console.error("Export error:", err);
+      }
+    }
+    doExport();
+  }
+
+  function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const data = JSON.parse(text) as SavedVersion;
+
+        // Validate structure
+        if (!Array.isArray(data.guests) || !Array.isArray(data.tables)) {
+          throw new Error("Invalid file format: missing guests or tables");
+        }
+
+        // Load the imported version
+        const guestsCopy = JSON.parse(JSON.stringify(data.guests)) as Guest[];
+        const tablesCopy = JSON.parse(JSON.stringify(data.tables)) as TableModel[];
+        setGuests(guestsCopy);
+        setTables(tablesCopy);
+        setSelectedTableId(tablesCopy[0]?.id ?? null);
+        if (data.stageSize) {
+          setStageSize(data.stageSize);
+        } else {
+          setStageSize(calculateStageSize(tablesCopy));
+        }
+        if (data.pan) {
+          setPan(data.pan);
+        } else {
+          setPan({ x: 0, y: 0 });
+        }
+
+        toast({
+          title: "Version imported",
+          description: `"${data.name || "Imported version"}" loaded successfully.`,
+        });
+      } catch (err) {
+        toast({
+          title: "Failed to import",
+          description: err instanceof Error ? err.message : "Invalid file format.",
+          variant: "destructive",
+        });
+        console.error("Import error:", err);
+      }
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be imported again
+    event.target.value = "";
   }
 
   const unassignedGuests = useMemo(() => {
@@ -1245,6 +1383,52 @@ export default function SeatingDesignerPage() {
                 <p className="mt-1 text-xs text-muted-foreground">
                   Save and load different guest lists and table positions.
                 </p>
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl bg-white/70 flex-1"
+                    onClick={() => {
+                      const currentVersion: SavedVersion = {
+                        id: uid("temp"),
+                        name: versionName.trim() || "Current plan",
+                        savedAt: new Date().toISOString(),
+                        guests: JSON.parse(JSON.stringify(guests)),
+                        tables: JSON.parse(JSON.stringify(tables)),
+                        stageSize: { ...stageSize },
+                        pan: { ...pan },
+                      };
+                      exportVersion(currentVersion, false);
+                    }}
+                    data-testid="button-export-current"
+                  >
+                    <Download className="mr-1.5 h-4 w-4" />
+                    Export
+                  </Button>
+                  <label className="flex-1">
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleImportFile}
+                      className="hidden"
+                      data-testid="input-import-file"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl bg-white/70 w-full"
+                      onClick={() => {
+                        const input = document.querySelector('[data-testid="input-import-file"]') as HTMLInputElement;
+                        input?.click();
+                      }}
+                      data-testid="button-import"
+                    >
+                      <Upload className="mr-1.5 h-4 w-4" />
+                      Import
+                    </Button>
+                  </label>
+                </div>
                 <div className="mt-3 space-y-2">
                   <Label className="text-xs text-muted-foreground">Save to</Label>
                   <Select
@@ -1306,6 +1490,17 @@ export default function SeatingDesignerPage() {
                               <Button
                                 type="button"
                                 variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => exportVersion(v, true)}
+                                title="Export version"
+                                data-testid={`button-export-server-version-${v.id}`}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
                                 size="sm"
                                 className="h-8 text-xs"
                                 onClick={() => loadServerVersion(v.id)}
@@ -1345,6 +1540,17 @@ export default function SeatingDesignerPage() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => exportVersion(v, false)}
+                                title="Export version"
+                                data-testid={`button-export-local-version-${v.id}`}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </Button>
                               <Button
                                 type="button"
                                 variant="ghost"
