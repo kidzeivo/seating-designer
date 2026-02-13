@@ -31,6 +31,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const SAVED_VERSIONS_KEY = "seating-designer-versions";
@@ -431,8 +432,11 @@ export default function SeatingDesignerPage() {
       if (res.ok) {
         const list = (await res.json()) as VersionMeta[];
         setServerVersions(list);
+      } else {
+        console.error("Failed to fetch server versions:", res.status, res.statusText);
       }
-    } catch {
+    } catch (err) {
+      console.error("Error fetching server versions:", err);
       setServerVersions([]);
     } finally {
       setServerVersionsLoading(false);
@@ -460,7 +464,26 @@ export default function SeatingDesignerPage() {
         if (res.ok) {
           setVersionName("");
           await fetchServerVersions();
+          toast({
+            title: "Version saved",
+            description: `"${trimmed}" saved to server successfully.`,
+          });
+        } else {
+          const error = await res.json().catch(() => ({ message: "Failed to save version" }));
+          toast({
+            title: "Failed to save",
+            description: error.message || "Server error. Check console for details.",
+            variant: "destructive",
+          });
+          console.error("Save failed:", res.status, error);
         }
+      } catch (err) {
+        toast({
+          title: "Failed to save",
+          description: "Network error. Make sure the server is running.",
+          variant: "destructive",
+        });
+        console.error("Save error:", err);
       } finally {
         setServerSaveLoading(false);
       }
@@ -490,15 +513,31 @@ export default function SeatingDesignerPage() {
   async function loadServerVersion(id: string) {
     try {
       const res = await fetch(`/api/versions/${id}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        toast({
+          title: "Failed to load",
+          description: "Version not found or server error.",
+          variant: "destructive",
+        });
+        return;
+      }
       const data = (await res.json()) as SavedVersion;
       const guestsCopy = JSON.parse(JSON.stringify(data.guests)) as Guest[];
       const tablesCopy = JSON.parse(JSON.stringify(data.tables)) as TableModel[];
       setGuests(guestsCopy);
       setTables(tablesCopy);
       setSelectedTableId(tablesCopy[0]?.id ?? null);
-    } catch {
-      // ignore
+      toast({
+        title: "Version loaded",
+        description: `"${data.name}" loaded successfully.`,
+      });
+    } catch (err) {
+      toast({
+        title: "Failed to load",
+        description: "Network error. Check console for details.",
+        variant: "destructive",
+      });
+      console.error("Load error:", err);
     }
   }
 
@@ -509,9 +548,26 @@ export default function SeatingDesignerPage() {
   async function deleteServerVersion(id: string) {
     try {
       const res = await fetch(`/api/versions/${id}`, { method: "DELETE" });
-      if (res.ok) await fetchServerVersions();
-    } catch {
-      // ignore
+      if (res.ok) {
+        await fetchServerVersions();
+        toast({
+          title: "Version deleted",
+          description: "Version removed from server.",
+        });
+      } else {
+        toast({
+          title: "Failed to delete",
+          description: "Server error. Check console for details.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Failed to delete",
+        description: "Network error. Check console for details.",
+        variant: "destructive",
+      });
+      console.error("Delete error:", err);
     }
   }
 

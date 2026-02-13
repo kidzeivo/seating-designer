@@ -25,9 +25,10 @@ export async function registerRoutes(
         tables,
       });
       return res.status(201).json(meta);
-    } catch (err) {
-      console.error("POST /api/versions", err);
-      return res.status(500).json({ message: "Failed to save version" });
+    } catch (err: any) {
+      console.error("POST /api/versions error:", err);
+      const errorMessage = err?.message || "Failed to save version";
+      return res.status(500).json({ message: errorMessage, error: String(err) });
     }
   });
 

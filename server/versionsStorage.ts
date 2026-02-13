@@ -13,7 +13,12 @@ function isValidId(id: string): boolean {
 }
 
 async function ensureDir(): Promise<void> {
-  await fs.mkdir(getVersionsDir(), { recursive: true });
+  try {
+    await fs.mkdir(getVersionsDir(), { recursive: true });
+  } catch (err) {
+    console.error("Failed to create versions directory:", err);
+    throw err;
+  }
 }
 
 export type VersionPayload = {
@@ -77,7 +82,13 @@ export async function saveVersion(payload: VersionPayload): Promise<VersionMeta>
     tables: payload.tables,
   };
   const filePath = path.join(getVersionsDir(), `${id}.json`);
-  await fs.writeFile(filePath, JSON.stringify(full), "utf-8");
+  try {
+    await fs.writeFile(filePath, JSON.stringify(full), "utf-8");
+    console.log(`Saved version ${id} to ${filePath}`);
+  } catch (err) {
+    console.error(`Failed to save version ${id} to ${filePath}:`, err);
+    throw err;
+  }
   return { id, name: payload.name, savedAt };
 }
 
