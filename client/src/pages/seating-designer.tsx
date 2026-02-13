@@ -5,12 +5,15 @@ import {
   ChevronRight,
   Copy,
   Crown,
+  Download,
   Grid3X3,
   Hand,
   LayoutGrid,
   Plus,
+  Save,
   Sparkles,
   Trash2,
+  UserMinus,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,10 +21,30 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+
+const SAVED_VERSIONS_KEY = "seating-designer-versions";
+
+type SavedVersion = {
+  id: string;
+  name: string;
+  savedAt: string;
+  guests: Guest[];
+  tables: TableModel[];
+};
+
+type VersionMeta = { id: string; name: string; savedAt: string };
+type SaveDestination = "server" | "local";
 
 type GuestGender = "female" | "male";
 
@@ -47,6 +70,7 @@ type TableModel = {
   label?: string;
   shape: TableShape;
   numberStyle: TableNumberStyle;
+  isVip?: boolean;
   x: number;
   y: number;
   rotation: number;
@@ -296,6 +320,7 @@ export default function SeatingDesignerPage() {
       number: 1,
       shape: "round",
       numberStyle: "classic",
+      isVip: true,
       x: 240,
       y: 210,
       rotation: 0,
@@ -309,6 +334,7 @@ export default function SeatingDesignerPage() {
       number: 2,
       shape: "round",
       numberStyle: "monogram",
+      isVip: false,
       x: 520,
       y: 260,
       rotation: 0.2,
@@ -322,6 +348,7 @@ export default function SeatingDesignerPage() {
       number: 3,
       shape: "rect",
       numberStyle: "modern",
+      isVip: false,
       x: 350,
       y: 430,
       rotation: 0,
@@ -373,6 +400,121 @@ export default function SeatingDesignerPage() {
   const [newGuest, setNewGuest] = useState({ title: "", firstName: "", lastName: "", gender: "female" as GuestGender });
   const [draggedGuestId, setDraggedGuestId] = useState<string | null>(null);
 
+  const [saveDestination, setSaveDestination] = useState<SaveDestination>("server");
+  const [serverVersions, setServerVersions] = useState<VersionMeta[]>([]);
+  const [serverVersionsLoading, setServerVersionsLoading] = useState(true);
+  const [serverSaveLoading, setServerSaveLoading] = useState(false);
+
+  const [savedVersions, setSavedVersions] = useState<SavedVersion[]>(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_VERSIONS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as SavedVersion[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [versionName, setVersionName] = useState("");
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SAVED_VERSIONS_KEY, JSON.stringify(savedVersions));
+    } catch {
+      // ignore
+    }
+  }, [savedVersions]);
+
+  async function fetchServerVersions() {
+    try {
+      const res = await fetch("/api/versions");
+      if (res.ok) {
+        const list = (await res.json()) as VersionMeta[];
+        setServerVersions(list);
+      }
+    } catch {
+      setServerVersions([]);
+    } finally {
+      setServerVersionsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchServerVersions();
+  }, []);
+
+  async function saveCurrentVersion(name: string) {
+    const trimmed = name.trim() || `Version ${serverVersions.length + savedVersions.length + 1}`;
+    if (saveDestination === "server") {
+      setServerSaveLoading(true);
+      try {
+        const res = await fetch("/api/versions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: trimmed,
+            guests: JSON.parse(JSON.stringify(guests)),
+            tables: JSON.parse(JSON.stringify(tables)),
+          }),
+        });
+        if (res.ok) {
+          setVersionName("");
+          await fetchServerVersions();
+        }
+      } finally {
+        setServerSaveLoading(false);
+      }
+      return;
+    }
+    const version: SavedVersion = {
+      id: uid("v"),
+      name: trimmed,
+      savedAt: new Date().toISOString(),
+      guests: JSON.parse(JSON.stringify(guests)),
+      tables: JSON.parse(JSON.stringify(tables)),
+    };
+    setSavedVersions((prev) => [version, ...prev].slice(0, 20));
+    setVersionName("");
+  }
+
+  function loadLocalVersion(id: string) {
+    const v = savedVersions.find((x) => x.id === id);
+    if (!v) return;
+    const guestsCopy = JSON.parse(JSON.stringify(v.guests)) as Guest[];
+    const tablesCopy = JSON.parse(JSON.stringify(v.tables)) as TableModel[];
+    setGuests(guestsCopy);
+    setTables(tablesCopy);
+    setSelectedTableId(tablesCopy[0]?.id ?? null);
+  }
+
+  async function loadServerVersion(id: string) {
+    try {
+      const res = await fetch(`/api/versions/${id}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as SavedVersion;
+      const guestsCopy = JSON.parse(JSON.stringify(data.guests)) as Guest[];
+      const tablesCopy = JSON.parse(JSON.stringify(data.tables)) as TableModel[];
+      setGuests(guestsCopy);
+      setTables(tablesCopy);
+      setSelectedTableId(tablesCopy[0]?.id ?? null);
+    } catch {
+      // ignore
+    }
+  }
+
+  function deleteLocalVersion(id: string) {
+    setSavedVersions((prev) => prev.filter((x) => x.id !== id));
+  }
+
+  async function deleteServerVersion(id: string) {
+    try {
+      const res = await fetch(`/api/versions/${id}`, { method: "DELETE" });
+      if (res.ok) await fetchServerVersions();
+    } catch {
+      // ignore
+    }
+  }
+
   const unassignedGuests = useMemo(() => {
     const assigned = new Set<string>();
     tables.forEach((t) => t.chairs.forEach((c) => c.guestId && assigned.add(c.guestId)));
@@ -383,6 +525,54 @@ export default function SeatingDesignerPage() {
     const max = tables.reduce((m, t) => Math.max(m, t.number), 0);
     return max + 1;
   }, [tables]);
+
+  const guestsByTable = useMemo(() => {
+    return [...tables]
+      .sort((a, b) => a.number - b.number)
+      .map((t) => ({
+        tableId: t.id,
+        tableNumber: t.number,
+        shape: t.shape,
+        isVip: t.isVip ?? false,
+        seats: t.chairs.map((c, i) => ({
+          chairId: c.id,
+          seatNumber: i + 1,
+          guest: c.guestId ? guests.find((g) => g.id === c.guestId) : undefined,
+        })),
+      }));
+  }, [tables, guests]);
+
+  function escapeCsvCell(value: string) {
+    if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+    return value;
+  }
+
+  function exportToCsv() {
+    const headers = ["Table Number", "VIP", "Seat", "Guest Name", "Gender"];
+    const rows: string[][] = [headers];
+    guestsByTable.forEach(({ tableNumber, isVip, seats }) => {
+      seats.forEach(({ seatNumber, guest }) => {
+        rows.push([
+          String(tableNumber),
+          isVip ? "Yes" : "",
+          String(seatNumber),
+          guest ? guest.name : "",
+          guest ? guest.gender : "",
+        ]);
+      });
+    });
+    unassignedGuests.forEach((g) => {
+      rows.push(["", "", "", g.name, g.gender]);
+    });
+    const csv = rows.map((row) => row.map(escapeCsvCell).join(",")).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `seating-guests-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   function snap(n: number) {
     if (!snapToGrid) return n;
@@ -421,6 +611,7 @@ export default function SeatingDesignerPage() {
       number: nextTableNumber,
       shape,
       numberStyle: shape === "rect" ? "modern" : "classic",
+      isVip: false,
       x: snap(stageSize.w * 0.5 - pan.x),
       y: snap(stageSize.h * 0.5 - pan.y),
       rotation: 0,
@@ -440,6 +631,7 @@ export default function SeatingDesignerPage() {
       ...t,
       id,
       number: nextTableNumber,
+      isVip: t.isVip ?? false,
       x: snap(t.x + 40),
       y: snap(t.y + 40),
       chairs: t.chairs.map((c, i) => ({ id: `${id}c${i + 1}`, guestId: c.guestId })),
@@ -797,6 +989,20 @@ export default function SeatingDesignerPage() {
                       </div>
                     </div>
 
+                    <div className="flex items-center justify-between rounded-xl border bg-white/70 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <Crown className="h-4 w-4 text-amber-500" />
+                        <Label className="text-xs font-medium">VIP table</Label>
+                      </div>
+                      <Switch
+                        checked={selectedTable.isVip ?? false}
+                        onCheckedChange={(checked) =>
+                          setTablePatch(selectedTable.id, { isVip: checked })
+                        }
+                        data-testid="switch-vip-table"
+                      />
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-2">
                         <Label className="text-xs">Rotation</Label>
@@ -863,7 +1069,153 @@ export default function SeatingDesignerPage() {
 
             <Card className="glass grain shadow-soft overflow-hidden border-white/40">
               <div className="p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Save className="h-4 w-4 text-primary" />
+                  <div className="text-sm font-semibold" data-testid="text-versions-title">
+                    Saved versions
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Save and load different guest lists and table positions.
+                </p>
+                <div className="mt-3 space-y-2">
+                  <Label className="text-xs text-muted-foreground">Save to</Label>
+                  <Select
+                    value={saveDestination}
+                    onValueChange={(v) => setSaveDestination(v as SaveDestination)}
+                    data-testid="select-save-destination"
+                  >
+                    <SelectTrigger className="rounded-xl bg-white/70">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="server">Server (default)</SelectItem>
+                      <SelectItem value="local">This device only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <Input
+                    placeholder="Version name"
+                    value={versionName}
+                    onChange={(e) => setVersionName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && saveCurrentVersion(versionName)}
+                    className="rounded-xl bg-white/70 flex-1"
+                    data-testid="input-version-name"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-xl bg-white/70 shrink-0"
+                    onClick={() => saveCurrentVersion(versionName)}
+                    disabled={serverSaveLoading}
+                    data-testid="button-save-version"
+                  >
+                    <Save className="mr-1.5 h-4 w-4" />
+                    {serverSaveLoading ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {serverVersionsLoading ? (
+                    <div className="rounded-xl border bg-white/60 p-3 text-xs text-muted-foreground">
+                      Loading server versions…
+                    </div>
+                  ) : serverVersions.length > 0 ? (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">On server</Label>
+                      <div className="space-y-1.5 max-h-32 overflow-y-auto" data-testid="list-server-versions">
+                        {serverVersions.map((v) => (
+                          <div
+                            key={v.id}
+                            className="flex items-center justify-between gap-2 rounded-xl border bg-white/70 px-3 py-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-semibold truncate">{v.name}</div>
+                              <div className="text-[11px] text-muted-foreground">
+                                {new Date(v.savedAt).toLocaleString()}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 text-xs"
+                                onClick={() => loadServerVersion(v.id)}
+                                data-testid={`button-load-server-version-${v.id}`}
+                              >
+                                Load
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive"
+                                onClick={() => deleteServerVersion(v.id)}
+                                data-testid={`button-delete-server-version-${v.id}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {savedVersions.length > 0 ? (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">On this device</Label>
+                      <div className="space-y-1.5 max-h-32 overflow-y-auto" data-testid="list-saved-versions">
+                        {savedVersions.map((v) => (
+                          <div
+                            key={v.id}
+                            className="flex items-center justify-between gap-2 rounded-xl border bg-white/70 px-3 py-2"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-semibold truncate">{v.name}</div>
+                              <div className="text-[11px] text-muted-foreground">
+                                {new Date(v.savedAt).toLocaleString()}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 text-xs"
+                                onClick={() => loadLocalVersion(v.id)}
+                                data-testid={`button-load-version-${v.id}`}
+                              >
+                                Load
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive"
+                                onClick={() => deleteLocalVersion(v.id)}
+                                data-testid={`button-delete-version-${v.id}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {!serverVersionsLoading && serverVersions.length === 0 && savedVersions.length === 0 ? (
+                    <div className="rounded-xl border bg-white/60 p-3 text-xs text-muted-foreground">
+                      No saved versions yet. Name and save to create one (default: server).
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </Card>
+
+            <Card className="glass grain shadow-soft overflow-hidden border-white/40">
+              <div className="p-4">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div>
                     <div className="flex items-center gap-2">
                       <Users className="h-4 w-4 text-primary" />
@@ -872,20 +1224,31 @@ export default function SeatingDesignerPage() {
                       </div>
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      Click a seat to assign a guest.
+                      By table · Click a seat to assign.
                     </div>
                   </div>
-                  <Popover open={isGuestFormOpen} onOpenChange={setIsGuestFormOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className="rounded-full bg-white/70"
-                        data-testid="button-add-guest"
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add guest
-                      </Button>
-                    </PopoverTrigger>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full bg-white/70"
+                      onClick={exportToCsv}
+                      data-testid="button-export-csv"
+                    >
+                      <Download className="mr-1.5 h-4 w-4" />
+                      Export CSV
+                    </Button>
+                    <Popover open={isGuestFormOpen} onOpenChange={setIsGuestFormOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className="rounded-full bg-white/70"
+                          data-testid="button-add-guest"
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add guest
+                        </Button>
+                      </PopoverTrigger>
                     <PopoverContent className="w-80 p-4">
                       <div className="space-y-4">
                         <h4 className="font-medium leading-none">Add Guest</h4>
@@ -954,6 +1317,7 @@ export default function SeatingDesignerPage() {
                       </div>
                     </PopoverContent>
                   </Popover>
+                  </div>
                 </div>
 
                 <div className="mt-4">
@@ -983,30 +1347,73 @@ export default function SeatingDesignerPage() {
                 <Separator className="my-4" />
 
                 <div>
-                  <Label className="text-xs text-muted-foreground">Assigned</Label>
-                  <div className="mt-2 grid grid-cols-1 gap-2" data-testid="list-assigned-summary">
-                    {tables.map((t) => {
-                      const assigned = t.chairs.filter((c) => c.guestId).length;
+                  <Label className="text-xs text-muted-foreground">By table</Label>
+                  <div className="mt-2 space-y-3" data-testid="list-guests-by-table">
+                    {guestsByTable.map(({ tableId, tableNumber, shape, isVip, seats }) => {
+                      const assignedSeats = seats.filter((s) => s.guest);
                       return (
-                        <button
-                          key={t.id}
-                          onClick={() => setSelectedTableId(t.id)}
+                        <div
+                          key={tableId}
                           className={cn(
-                            "group flex w-full items-center justify-between rounded-xl border bg-white/70 px-3 py-2 text-left transition",
-                            selectedTableId === t.id
-                              ? "ring-2 ring-primary/30"
-                              : "hover:bg-white",
+                            "rounded-xl border overflow-hidden transition",
+                            isVip ? "bg-amber-50/80 border-amber-200/60" : "bg-white/70",
+                            selectedTableId === tableId && "ring-2 ring-primary/30",
                           )}
-                          data-testid={`button-select-table-${t.id}`}
                         >
-                          <div className="min-w-0">
-                            <div className="truncate text-xs font-semibold">Table {t.number}</div>
-                            <div className="text-[11px] text-muted-foreground">
-                              {assigned}/{t.chairs.length} seated
-                            </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTableId(tableId)}
+                            className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-white/50"
+                            data-testid={`button-select-table-${tableId}`}
+                          >
+                            <span className="flex items-center gap-1.5 text-xs font-semibold">
+                              Table {tableNumber}
+                              {isVip && (
+                                <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                  <Crown className="h-2.5 w-2.5" />
+                                  VIP
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              {assignedSeats.length}/{seats.length} · {shape}
+                            </span>
+                          </button>
+                          <div className="border-t border-black/5 px-3 py-2 space-y-1.5">
+                            {seats.map(({ chairId, seatNumber, guest }) => (
+                              <div
+                                key={`${tableId}-${chairId}`}
+                                className="flex items-center gap-2 text-xs group/row"
+                              >
+                                <span className="w-6 shrink-0 text-[11px] text-muted-foreground">
+                                  {seatNumber}.
+                                </span>
+                                {guest ? (
+                                  <>
+                                    <span className="truncate font-medium flex-1 min-w-0" data-testid={`guest-table-${tableId}-seat-${seatNumber}`}>
+                                      {guest.name}
+                                    </span>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 shrink-0 opacity-0 group-hover/row:opacity-100 text-muted-foreground hover:text-destructive"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        assignGuest(tableId, chairId, undefined);
+                                      }}
+                                      title="Remove from table (move to unassigned)"
+                                      data-testid={`button-remove-guest-from-table-${tableId}-${chairId}`}
+                                    >
+                                      <UserMinus className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <span className="text-muted-foreground italic">—</span>
+                                )}
+                              </div>
+                            ))}
                           </div>
-                          <div className="text-[11px] text-muted-foreground">{t.shape}</div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -1134,13 +1541,26 @@ export default function SeatingDesignerPage() {
                                 "relative grid place-items-center rounded-full bg-white shadow-soft ring-1",
                                 isSelected
                                   ? "ring-primary/35"
-                                  : "ring-black/10",
+                                  : (t.isVip ? "ring-2 ring-amber-400/70" : "ring-black/10"),
                               )}
                               style={{ width: tableSize.w, height: tableSize.h }}
                             >
-                              <div className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_20%,rgba(251,191,36,0.18),transparent_55%),radial-gradient(circle_at_70%_60%,rgba(59,130,246,0.12),transparent_60%)]" />
+                              <div className={cn(
+                                "pointer-events-none absolute inset-0 rounded-full",
+                                t.isVip
+                                  ? "bg-[radial-gradient(circle_at_30%_20%,rgba(251,191,36,0.28),transparent_55%),radial-gradient(circle_at_70%_60%,rgba(245,158,11,0.15),transparent_60%)]"
+                                  : "bg-[radial-gradient(circle_at_30%_20%,rgba(251,191,36,0.18),transparent_55%),radial-gradient(circle_at_70%_60%,rgba(59,130,246,0.12),transparent_60%)]",
+                              )} />
                               <div className="pointer-events-none absolute inset-[10px] rounded-full border border-black/5" />
-                              <TableBadge number={t.number} style={t.numberStyle} />
+                              <div className="pointer-events-none flex flex-col items-center justify-center gap-1">
+                                <TableBadge number={t.number} style={t.numberStyle} />
+                                {t.isVip && (
+                                  <div className="flex items-center gap-1 rounded-full bg-amber-500/95 px-2 py-0.5 text-[10px] font-bold text-white shadow-sm">
+                                    <Crown className="h-3 w-3" />
+                                    VIP
+                                  </div>
+                                )}
+                              </div>
                               <div className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2">
                                 <div
                                   className={cn(
@@ -1158,13 +1578,26 @@ export default function SeatingDesignerPage() {
                                 "relative grid place-items-center rounded-2xl bg-white shadow-soft ring-1",
                                 isSelected
                                   ? "ring-primary/35"
-                                  : "ring-black/10",
+                                  : (t.isVip ? "ring-2 ring-amber-400/70" : "ring-black/10"),
                               )}
                               style={{ width: tableSize.w, height: tableSize.h }}
                             >
-                              <div className="pointer-events-none absolute inset-0 rounded-2xl bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(255,255,255,0)_55%),radial-gradient(400px_200px_at_70%_80%,rgba(59,130,246,0.12),transparent_60%)]" />
+                              <div className={cn(
+                                "pointer-events-none absolute inset-0 rounded-2xl",
+                                t.isVip
+                                  ? "bg-[linear-gradient(135deg,rgba(251,191,36,0.28),rgba(255,255,255,0)_55%),radial-gradient(400px_200px_at_70%_80%,rgba(245,158,11,0.18),transparent_60%)]"
+                                  : "bg-[linear-gradient(135deg,rgba(251,191,36,0.18),rgba(255,255,255,0)_55%),radial-gradient(400px_200px_at_70%_80%,rgba(59,130,246,0.12),transparent_60%)]",
+                              )} />
                               <div className="pointer-events-none absolute inset-1 rounded-2xl border border-black/5" />
-                              <TableBadge number={t.number} style={t.numberStyle} />
+                              <div className="pointer-events-none flex flex-col items-center justify-center gap-1">
+                                <TableBadge number={t.number} style={t.numberStyle} />
+                                {t.isVip && (
+                                  <div className="flex items-center gap-1 rounded-full bg-amber-500/95 px-2 py-0.5 text-[10px] font-bold text-white shadow-sm">
+                                    <Crown className="h-3 w-3" />
+                                    VIP
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
 
@@ -1238,39 +1671,48 @@ export default function SeatingDesignerPage() {
                                   }
                                 >
                                   <PopoverTrigger asChild>
-                                    <button
-                                      className={cn(
-                                        "absolute grid h-7 w-7 place-items-center rounded-full border text-[10px] font-semibold shadow-sm transition",
-                                        guest
-                                          ? "bg-foreground text-background border-black/10"
-                                          : "bg-white/90 hover:bg-white border-black/10",
-                                        draggedGuestId && !guest && "ring-2 ring-primary ring-offset-2 bg-primary/10 animate-pulse"
-                                      )}
-                                      style={{
-                                        left: `calc(50% + ${seatX}px)` ,
-                                        top: `calc(50% + ${seatY}px)` ,
-                                        transform: "translate(-50%, -50%)",
-                                      }}
-                                      onDragOver={(e) => {
-                                        if (draggedGuestId && !guest) {
-                                          e.preventDefault();
-                                        }
-                                      }}
-                                      onDrop={(e) => {
-                                        if (draggedGuestId && !guest) {
-                                          e.preventDefault();
-                                          assignGuest(t.id, c.id, draggedGuestId);
-                                          setDraggedGuestId(null);
-                                        }
-                                      }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setSelectedTableId(t.id);
-                                      }}
-                                      data-testid={`button-seat-${t.id}-${c.id}`}
-                                    >
-                                      {guest ? initials(guest.name) : i + 1}
-                                    </button>
+                                    <span className="inline-block">
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            className={cn(
+                                              "absolute grid h-7 w-7 place-items-center rounded-full border text-[10px] font-semibold shadow-sm transition",
+                                              guest
+                                                ? "bg-foreground text-background border-black/10"
+                                                : "bg-white/90 hover:bg-white border-black/10",
+                                              draggedGuestId && !guest && "ring-2 ring-primary ring-offset-2 bg-primary/10 animate-pulse"
+                                            )}
+                                            style={{
+                                              left: `calc(50% + ${seatX}px)` ,
+                                              top: `calc(50% + ${seatY}px)` ,
+                                              transform: "translate(-50%, -50%)",
+                                            }}
+                                            onDragOver={(e) => {
+                                              if (draggedGuestId && !guest) {
+                                                e.preventDefault();
+                                              }
+                                            }}
+                                            onDrop={(e) => {
+                                              if (draggedGuestId && !guest) {
+                                                e.preventDefault();
+                                                assignGuest(t.id, c.id, draggedGuestId);
+                                                setDraggedGuestId(null);
+                                              }
+                                            }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setSelectedTableId(t.id);
+                                            }}
+                                            data-testid={`button-seat-${t.id}-${c.id}`}
+                                          >
+                                            {guest ? initials(guest.name) : i + 1}
+                                          </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="max-w-[200px]">
+                                          {guest ? guest.name : `Seat ${i + 1} (empty)`}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </span>
                                   </PopoverTrigger>
                                   <PopoverContent
                                     align="center"
@@ -1287,15 +1729,18 @@ export default function SeatingDesignerPage() {
                                             Assign guest
                                           </div>
                                         </div>
-                                        <Button
-                                          variant="ghost"
-                                          size="icon"
-                                          className="h-9 w-9"
-                                          onClick={() => assignGuest(t.id, c.id, undefined)}
-                                          data-testid={`button-clear-seat-${t.id}-${c.id}`}
-                                        >
-                                          <Trash2 className="h-4 w-4" />
-                                        </Button>
+                                        {guest ? (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-9 gap-1.5 text-destructive hover:text-destructive"
+                                            onClick={() => assignGuest(t.id, c.id, undefined)}
+                                            data-testid={`button-clear-seat-${t.id}-${c.id}`}
+                                          >
+                                            <UserMinus className="h-4 w-4" />
+                                            Move to unassigned
+                                          </Button>
+                                        ) : null}
                                       </div>
 
                                       <div className="mt-3 space-y-2">
