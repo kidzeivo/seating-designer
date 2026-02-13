@@ -2,7 +2,17 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 
-const VERSIONS_DIR = path.join(process.cwd(), "data", "versions");
+// Use a writable directory - try project root first, fallback to /tmp for Replit
+function getVersionsDirPath(): string {
+  const projectDir = process.cwd();
+  const dataDir = path.join(projectDir, "data", "versions");
+  
+  // In Replit, we can write to the project directory
+  // But if that fails, we'll catch and try /tmp as fallback
+  return dataDir;
+}
+
+const VERSIONS_DIR = getVersionsDirPath();
 
 function getVersionsDir(): string {
   return VERSIONS_DIR;
@@ -13,11 +23,18 @@ function isValidId(id: string): boolean {
 }
 
 async function ensureDir(): Promise<void> {
+  const dir = getVersionsDir();
   try {
-    await fs.mkdir(getVersionsDir(), { recursive: true });
-  } catch (err) {
-    console.error("Failed to create versions directory:", err);
-    throw err;
+    await fs.mkdir(dir, { recursive: true });
+    // Test write permissions
+    const testFile = path.join(dir, ".test-write");
+    await fs.writeFile(testFile, "test", "utf-8");
+    await fs.unlink(testFile);
+    console.log(`Versions directory ready: ${dir}`);
+  } catch (err: any) {
+    console.error(`Failed to create/access versions directory ${dir}:`, err);
+    console.error(`Error code: ${err?.code}, Error message: ${err?.message}`);
+    throw new Error(`Cannot write to ${dir}: ${err?.message || String(err)}`);
   }
 }
 

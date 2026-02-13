@@ -8,6 +8,7 @@
     "dev": "NODE_ENV=development npx tsx server/index.ts",
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
+    "deploy": "npm run build && npm run start",
     "check": "npx tsc --noEmit",
     "db:push": "drizzle-kit push"
   },

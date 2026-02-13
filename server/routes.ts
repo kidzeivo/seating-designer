@@ -12,23 +12,55 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // CORS headers for API routes
+  app.use("/api", (req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
+  // Health check endpoint
+  app.get("/api/health", (_req: Request, res: Response) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // Seating designer versions (file-based)
   app.post("/api/versions", async (req: Request, res: Response) => {
     try {
+      console.log("POST /api/versions received", {
+        hasBody: !!req.body,
+        bodyKeys: req.body ? Object.keys(req.body) : [],
+        name: req.body?.name,
+        guestsCount: Array.isArray(req.body?.guests) ? req.body.guests.length : 0,
+        tablesCount: Array.isArray(req.body?.tables) ? req.body.tables.length : 0,
+      });
       const { name, guests, tables } = req.body ?? {};
       if (!Array.isArray(guests) || !Array.isArray(tables)) {
+        console.error("Invalid request body:", { guests: Array.isArray(guests), tables: Array.isArray(tables) });
         return res.status(400).json({ message: "Missing or invalid guests/tables" });
       }
+      console.log("Saving version...");
       const meta = await saveVersion({
         name: typeof name === "string" ? name.trim() || "Unnamed version" : "Unnamed version",
         guests,
         tables,
       });
+      console.log("Version saved successfully:", meta.id);
       return res.status(201).json(meta);
     } catch (err: any) {
       console.error("POST /api/versions error:", err);
+      console.error("Error stack:", err?.stack);
       const errorMessage = err?.message || "Failed to save version";
-      return res.status(500).json({ message: errorMessage, error: String(err) });
+      return res.status(500).json({ 
+        message: errorMessage, 
+        error: String(err),
+        code: err?.code,
+        path: err?.path,
+      });
     }
   });
 
