@@ -371,6 +371,7 @@ export default function SeatingDesignerPage() {
 
   const [isGuestFormOpen, setIsGuestFormOpen] = useState(false);
   const [newGuest, setNewGuest] = useState({ title: "", firstName: "", lastName: "", gender: "female" as GuestGender });
+  const [draggedGuestId, setDraggedGuestId] = useState<string | null>(null);
 
   const unassignedGuests = useMemo(() => {
     const assigned = new Set<string>();
@@ -512,6 +513,11 @@ export default function SeatingDesignerPage() {
 
     (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
     setSelectedTableId(tableId);
+    
+    // Get the stage position to adjust coordinate system
+    const stageRect = stageRef.current?.getBoundingClientRect();
+    if (!stageRect) return;
+
     dragging.current = {
       tableId,
       startX: e.clientX,
@@ -524,9 +530,20 @@ export default function SeatingDesignerPage() {
   function moveDrag(e: React.PointerEvent) {
     if (!dragging.current) return;
     const d = dragging.current;
+    
+    // Scale factors in case of CSS scaling, though usually 1:1
     const dx = e.clientX - d.startX;
     const dy = e.clientY - d.startY;
-    setTablePatch(d.tableId, { x: snap(d.tableX + dx - pan.x), y: snap(d.tableY + dy - pan.y) });
+    
+    // IMPORTANT: Subtract pan to keep it aligned with the panning layer
+    // The table position is relative to the "panning layer", so we don't subtract pan here
+    // unless the table X/Y are stored in absolute stage coordinates. 
+    // Based on previous code: left: t.x, top: t.y inside the pan-translated div.
+    
+    setTablePatch(d.tableId, { 
+      x: snap(d.tableX + dx), 
+      y: snap(d.tableY + dy) 
+    });
   }
 
   function endDrag() {
@@ -950,7 +967,10 @@ export default function SeatingDesignerPage() {
                       unassignedGuests.slice(0, 8).map((g) => (
                         <div
                           key={g.id}
-                          className="rounded-xl border bg-white/70 p-2.5"
+                          draggable
+                          onDragStart={() => setDraggedGuestId(g.id)}
+                          onDragEnd={() => setDraggedGuestId(null)}
+                          className="cursor-grab active:cursor-grabbing rounded-xl border bg-white/70 p-2.5 hover:border-primary/50 transition-colors"
                           data-testid={`card-guest-${g.id}`}
                         >
                           <GuestChip guest={g} onRemove={() => removeGuest(g.id)} />
@@ -1224,11 +1244,24 @@ export default function SeatingDesignerPage() {
                                         guest
                                           ? "bg-foreground text-background border-black/10"
                                           : "bg-white/90 hover:bg-white border-black/10",
+                                        draggedGuestId && !guest && "ring-2 ring-primary ring-offset-2 bg-primary/10 animate-pulse"
                                       )}
                                       style={{
                                         left: `calc(50% + ${seatX}px)` ,
                                         top: `calc(50% + ${seatY}px)` ,
                                         transform: "translate(-50%, -50%)",
+                                      }}
+                                      onDragOver={(e) => {
+                                        if (draggedGuestId && !guest) {
+                                          e.preventDefault();
+                                        }
+                                      }}
+                                      onDrop={(e) => {
+                                        if (draggedGuestId && !guest) {
+                                          e.preventDefault();
+                                          assignGuest(t.id, c.id, draggedGuestId);
+                                          setDraggedGuestId(null);
+                                        }
                                       }}
                                       onClick={(e) => {
                                         e.stopPropagation();
