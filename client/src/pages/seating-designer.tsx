@@ -347,21 +347,30 @@ export default function SeatingDesignerPage() {
   const [stageSize, setStageSize] = useState({ w: 1000, h: 650 });
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
+  const [resizingStage, setResizingStage] = useState(false);
   const panStart = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
 
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-
-    const ro = new ResizeObserver(() => {
-      const rect = el.getBoundingClientRect();
-      setStageSize({ w: rect.width, h: rect.height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const gridSize = 24;
+
+  useEffect(() => {
+    if (!resizingStage) return;
+    const onMove = (e: MouseEvent) => {
+      setStageSize((prev) => ({
+        w: Math.max(400, prev.w + e.movementX),
+        h: Math.max(300, prev.h + e.movementY),
+      }));
+    };
+    const onUp = () => setResizingStage(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [resizingStage]);
+
+  const [isGuestFormOpen, setIsGuestFormOpen] = useState(false);
+  const [newGuest, setNewGuest] = useState({ title: "", firstName: "", lastName: "", gender: "female" as GuestGender });
 
   const unassignedGuests = useMemo(() => {
     const assigned = new Set<string>();
@@ -462,6 +471,11 @@ export default function SeatingDesignerPage() {
         chairs: t.chairs.map((c) => (c.guestId === guestId ? { ...c, guestId: undefined } : c)),
       })),
     );
+  }
+
+  function removeGuest(guestId: string) {
+    unassignGuestEverywhere(guestId);
+    setGuests((prev) => prev.filter((g) => g.id !== guestId));
   }
 
   const dragging = useRef<{
@@ -631,7 +645,11 @@ export default function SeatingDesignerPage() {
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <Button
-                    className="rounded-xl"
+                    variant={selectedTable?.shape === "round" ? "default" : "secondary"}
+                    className={cn(
+                      "rounded-xl",
+                      selectedTable?.shape !== "round" && "bg-gray-200 text-gray-600 hover:bg-gray-300",
+                    )}
                     onClick={() => addTable("round")}
                     data-testid="button-add-round-table"
                   >
@@ -639,8 +657,11 @@ export default function SeatingDesignerPage() {
                     Round table
                   </Button>
                   <Button
-                    variant="secondary"
-                    className="rounded-xl"
+                    variant={selectedTable?.shape === "rect" ? "default" : "secondary"}
+                    className={cn(
+                      "rounded-xl",
+                      selectedTable?.shape !== "rect" && "bg-gray-200 text-gray-600 hover:bg-gray-300",
+                    )}
                     onClick={() => addTable("rect")}
                     data-testid="button-add-rect-table"
                   >
@@ -837,25 +858,85 @@ export default function SeatingDesignerPage() {
                       Click a seat to assign a guest.
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    className="rounded-full bg-white/70"
-                    onClick={() => {
-                      const id = uid("g");
-                      setGuests((p) => [
-                        ...p,
-                        {
-                          id,
-                          name: `New Guest ${p.length + 1}`,
-                          gender: Math.random() > 0.5 ? "female" : "male",
-                        },
-                      ]);
-                    }}
-                    data-testid="button-add-guest"
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add guest
-                  </Button>
+                  <Popover open={isGuestFormOpen} onOpenChange={setIsGuestFormOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className="rounded-full bg-white/70"
+                        data-testid="button-add-guest"
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add guest
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80 p-4">
+                      <div className="space-y-4">
+                        <h4 className="font-medium leading-none">Add Guest</h4>
+                        <div className="grid gap-2">
+                          <div className="grid grid-cols-3 items-center gap-4">
+                            <Label htmlFor="title">Title</Label>
+                            <Input
+                              id="title"
+                              className="col-span-2 h-8"
+                              value={newGuest.title}
+                              onChange={(e) => setNewGuest({ ...newGuest, title: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid grid-cols-3 items-center gap-4">
+                            <Label htmlFor="firstName">First Name</Label>
+                            <Input
+                              id="firstName"
+                              className="col-span-2 h-8"
+                              value={newGuest.firstName}
+                              onChange={(e) => setNewGuest({ ...newGuest, firstName: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid grid-cols-3 items-center gap-4">
+                            <Label htmlFor="lastName">Last Name</Label>
+                            <Input
+                              id="lastName"
+                              className="col-span-2 h-8"
+                              value={newGuest.lastName}
+                              onChange={(e) => setNewGuest({ ...newGuest, lastName: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid grid-cols-3 items-center gap-4">
+                            <Label>Gender</Label>
+                            <Select
+                              value={newGuest.gender}
+                              onValueChange={(v) => setNewGuest({ ...newGuest, gender: v as GuestGender })}
+                            >
+                              <SelectTrigger className="col-span-2 h-8">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="female">Female</SelectItem>
+                                <SelectItem value="male">Male</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        <Button
+                          className="w-full"
+                          onClick={() => {
+                            const id = uid("g");
+                            setGuests((p) => [
+                              ...p,
+                              {
+                                id,
+                                name: `${newGuest.title} ${newGuest.firstName} ${newGuest.lastName}`.trim() || `Guest ${p.length + 1}`,
+                                gender: newGuest.gender,
+                              },
+                            ]);
+                            setNewGuest({ title: "", firstName: "", lastName: "", gender: "female" });
+                            setIsGuestFormOpen(false);
+                          }}
+                        >
+                          Save Guest
+                        </Button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </div>
 
                 <div className="mt-4">
@@ -872,7 +953,7 @@ export default function SeatingDesignerPage() {
                           className="rounded-xl border bg-white/70 p-2.5"
                           data-testid={`card-guest-${g.id}`}
                         >
-                          <GuestChip guest={g} onRemove={() => unassignGuestEverywhere(g.id)} />
+                          <GuestChip guest={g} onRemove={() => removeGuest(g.id)} />
                         </div>
                       ))
                     )}
@@ -966,9 +1047,10 @@ export default function SeatingDesignerPage() {
               <div
                 ref={stageRef}
                 className={cn(
-                  "relative h-[650px] w-full overflow-hidden bg-[linear-gradient(180deg,rgba(255,255,255,0.75),rgba(255,255,255,0.62))]",
+                  "relative overflow-hidden bg-[linear-gradient(180deg,rgba(255,255,255,0.75),rgba(255,255,255,0.62))]",
                   stageOverlay,
                 )}
+                style={{ width: stageSize.w, height: stageSize.h }}
                 onPointerDown={onStagePointerDown}
                 onPointerMove={(e) => {
                   onStagePointerMove(e);
@@ -980,6 +1062,14 @@ export default function SeatingDesignerPage() {
                 }}
                 data-testid="stage-floorplan"
               >
+                {/* Resize Handle */}
+                <div
+                  className="absolute bottom-0 right-0 z-50 h-6 w-6 cursor-nwse-resize bg-primary/20 hover:bg-primary/40"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setResizingStage(true);
+                  }}
+                />
                 <div
                   className="pointer-events-none absolute inset-0 bg-[radial-gradient(600px_400px_at_70%_0%,rgba(251,191,36,0.18),transparent_55%),radial-gradient(600px_400px_at_0%_60%,rgba(59,130,246,0.12),transparent_60%)]"
                 />
